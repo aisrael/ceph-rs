@@ -212,14 +212,6 @@ impl IoCtx {
 		let buf_ptr = buf.as_ptr();
 		let len : size_t = buf.as_bytes().len() as size_t;
 		handle_errors!(rados_write_full(self.handle, oid_cs.as_ptr(), buf_ptr, len));
-
-		// let buf : Vec<u8> = s.into();
-		// println!("buf => {:?}", buf);
-		// let buf_ptr : *const c_char = buf.as_ptr() as *const c_char;
-		// println!("buf_ptr => {:?}", buf_ptr);
-		// let len : size_t = buf.len() as size_t;
-		// println!("len => {:?}", len);
-		// handle_errors!(rados_write_full(self.handle, oid_ptr, buf_ptr, len));
 		return Ok(());
 	}
 
@@ -229,10 +221,10 @@ impl IoCtx {
 		// Need to hang on the the CString, can immediately do as_ptr()
 		// see https://github.com/rust-lang/rust/issues/16035
 		let oid_cs = CString::new(oid).unwrap();
+		// allow for terminating '\0' (not really needed)
 		let buf_size = len + 1;
 		// A neat way to allocate a zeroed out array of given size
 		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
-//		let mut buf : Vec<i8> = Vec::with_capacity(len); // allow for terminating '\0'
 		let buf_ptr = buf.as_mut_ptr();
 		handle_errors!(rados_read(self.handle, oid_cs.as_ptr(), buf_ptr as *mut c_char, buf_size as size_t, 0));
  		return Ok(unsafe {

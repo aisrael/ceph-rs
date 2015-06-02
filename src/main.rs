@@ -48,7 +48,7 @@ fn main() {
 	);
     println!("Wrote \"{}\" to object \"{}\".", data, key);
 
-    let read = ioctx.read("hw", 13).unwrap_or_else(|e|
+    let read = ioctx.read("hw", data.len()).unwrap_or_else(|e|
         panic!(format!("{}: Cannot read object \"{}\" from pool {}: {}", args[0], key, poolname, e))
     );
     println!("Read object {} => \"{}\"", key, read);
