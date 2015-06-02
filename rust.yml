@@ -1,0 +1,7 @@
+---
+- name: Get rustup.sh
+  # Use curl to get around certificate issues ;P
+  command: curl -f -L https://static.rust-lang.org/rustup.sh -O creates=rustup.sh
+- name: sh rustup.sh
+  command: sh rustup.sh -y --channel=nightly creates=/usr/local/bin/rustc
+  sudo: yes

@@ -1,0 +1,7 @@
+*~
+.DS_Store
+/.idea/
+/.vagrant/
+/target/
+*.keyring
+/ceph.conf

@@ -1,0 +1,4 @@
+[package]
+name = "ceph"
+version = "0.1.0"
+authors = ["Alistair A. Israel <aisrael@gmail.com>"]

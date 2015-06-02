@@ -1,0 +1,7 @@
+[package]
+name = "hello_ceph"
+version = "0.1.0"
+authors = ["Alistair A. Israel <aisrael@gmail.com>"]
+
+[dependencies.ceph]
+path = "src/ceph"

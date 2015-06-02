@@ -1,0 +1,11 @@
+[root]
+name = "hello_ceph"
+version = "0.1.0"
+dependencies = [
+ "ceph 0.1.0",
+]
+
+[[package]]
+name = "ceph"
+version = "0.1.0"
+
