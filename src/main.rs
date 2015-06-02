@@ -41,16 +41,17 @@ fn main() {
 
     /* Write data to the cluster synchronously. */
     let key = "hw";
-    let data = "Hello, World!";
+    let data = "Hello, world.";
+    println!("Setting \"{}\" to \"{}\"", key, data);
     ioctx.write(key, data).unwrap_or_else(|e|
     	panic!(format!("{}: Cannot write object \"{}\" to pool {}: {}", args[0], key, poolname, e))
 	);
     println!("Wrote \"{}\" to object \"{}\".", data, key);
 
-    let read = ioctx.read(key, data.len()).unwrap_or_else(|e|
-    	panic!(format!("{}: Cannot read object \"{}\" from pool {}: {}", args[0], key, poolname, e))
-	);
-	println!("Read object {} => \"{}\"", key, read);
+    let read = ioctx.read("hw", 13).unwrap_or_else(|e|
+        panic!(format!("{}: Cannot read object \"{}\" from pool {}: {}", args[0], key, poolname, e))
+    );
+    println!("Read object {} => \"{}\"", key, read);
 
     ioctx.remove(key).unwrap_or_else(|e|
     	panic!(format!("{}: Cannot remove object \"{}\" from pool {}: {}", args[0], key, poolname, e))

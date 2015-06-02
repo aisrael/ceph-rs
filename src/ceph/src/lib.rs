@@ -1,4 +1,4 @@
-#![feature(core, convert, libc)]
+#![feature(core, convert, libc, cstr_to_str)]
 extern crate libc;
 extern crate core;
 

@@ -1,8 +1,6 @@
-use std::ptr;
-use std::str;
-use std::ffi::CStr;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fmt;
+use std::ptr;
 
 use core::fmt::Debug;
 use core::fmt::Formatter;
@@ -31,7 +29,19 @@ extern "C" {
 
 	fn rados_ioctx_create(cluster: c_void_ptr, poolname: *const c_char, ioctx: &rados_ioctx_t) -> c_int;
 	fn rados_write(io: rados_ioctx_t, oid: *const c_char, buf: *const c_char, len: size_t, offset: u64) -> c_int;
-	fn rados_write_full(io: rados_ioctx_t, oid: *const c_char, buf: *const c_char, len: size_t) -> c_int;
+
+	/// Write *len* bytes from *buf* into the *oid* object. The value of
+	/// *len* must be <= UINT_MAX/2.
+	///
+	/// The object is filled with the provided data. If the object exists,
+	/// it is atomically truncated and then written.
+	///
+	/// @param io the io context in which the write will occur
+	/// @param oid name of the object
+	/// @param buf data to write
+	/// @param len length of the data, in bytes
+	/// @returns 0 on success, negative error code on failure
+ 	fn rados_write_full(io: rados_ioctx_t, oid: *const c_char, buf: *const c_char, len: size_t) -> c_int;
 
 	/// Read data from an object
 	///
@@ -79,12 +89,37 @@ pub struct IoCtx {
 	handle: c_void_ptr
 }
 
+pub trait ClusterNameArg {
+	fn unwrap(self) -> Option<CString>;
+}
+
+impl ClusterNameArg for String {
+	fn unwrap(self) -> Option<CString> {
+		Some(CString::new(self).unwrap())
+	}
+}
+
+impl ClusterNameArg for &'static str {
+	fn unwrap(self) -> Option<CString> {
+		Some(CString::new(self).unwrap())
+	}
+}
+
+impl ClusterNameArg for Option<String> {
+	fn unwrap(self) -> Option<CString> {
+		match self {
+			None => None,
+			Some(s) => Some(CString::new(s).unwrap())
+		}
+	}
+}
+
 macro_rules! handle_errors {
 	($x:expr) => {
 		unsafe {
 			let err = $x;
 			if err < 0 {
-				let s = str::from_utf8(CStr::from_ptr(strerror(err)).to_bytes()).unwrap();
+				let s = CStr::from_ptr(strerror(err)).to_str().unwrap();
 				println!("strerror({:?}) => {}", err, s);
 				return Err(s);
 			}
@@ -92,54 +127,28 @@ macro_rules! handle_errors {
 	}
 }
 
-pub trait ClusterNameArg {
-	fn as_ptr(self) -> *const c_char;
-}
-
-impl ClusterNameArg for String {
-	fn as_ptr(self) -> *const c_char {
-		CString::new(self).unwrap().as_ptr()
-	}
-}
-
-impl ClusterNameArg for &'static str {
-	fn as_ptr(self) -> *const c_char {
-		CString::new(self).unwrap().as_ptr()
-	}
-}
-
-impl ClusterNameArg for Option<String> {
-	fn as_ptr(self) -> *const c_char {
-		match self {
-			None => ptr::null(),
-			Some(s) => CString::new(s).unwrap().as_ptr()
-		}
-	}
-}
-
 impl Cluster {
-	pub fn create<A: ClusterNameArg>(cluster_name: A, user_name: &str, flags: u64) -> Result<Cluster, &str> {
-		let handle: c_void_ptr = ptr::null_mut();
-	    let cluster_name_ptr = cluster_name.as_ptr();
+	pub fn create<'lifetime, A: ClusterNameArg, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'lifetime str> {
+	    let cluster_name_ptr = match cluster_name.unwrap() {
+	    	None => ptr::null(),
+	    	Some(cs) => cs.as_ptr()
+	    };
 	    let user_name_ptr = CString::new(user_name).unwrap().as_ptr();
+		let handle: c_void_ptr = ptr::null_mut();
 	    handle_errors!(rados_create2(&handle, cluster_name_ptr, user_name_ptr, flags));
 		return Ok(Cluster { handle: handle });
 	}
 
-	pub fn conf_read_file(&self, config_filename: &str) -> Result<(), &str> {
-		let path_ptr = CString::new(config_filename).unwrap().as_ptr();
-		println!("About to call rados_conf_read_file({:?}, {:?})", &self.handle, path_ptr);
-		handle_errors!(rados_conf_read_file(self.handle, path_ptr));
+	pub fn conf_read_file<S: Into<Vec<u8>>>(&self, config_filename: S) -> Result<(), &str> {
+		let path = CString::new(config_filename).unwrap();
+		handle_errors!(rados_conf_read_file(self.handle, path.as_ptr()));
 		return Ok(());
 	}
 
 	pub fn conf_parse_argv(&self, args: &Vec<String>) -> Result<(), &str> {
-		let argc: i32 = args.len() as i32;
-		let mut argv: Vec<*const c_char> = Vec::new();
-		for s in args {
-			let p = CString::new(s.as_str()).unwrap().as_ptr();
-			argv.push(p);
-		}
+		let argc = args.len() as i32;
+		let args_cs : Vec<CString> = args.iter().map(|a| CString::new(a.as_str()).unwrap()).collect();
+		let argv : Vec<*const c_char> = args_cs.iter().map(|cs| cs.as_ptr()).collect();
 		handle_errors!(rados_conf_parse_argv(self.handle, argc, argv.as_slice().as_ptr()));
 		return Ok(());
 	}
@@ -149,7 +158,7 @@ impl Cluster {
 		return Ok(());
 	}
 
-	pub fn create_ioctx(&self, pool_name: &str) -> Result<IoCtx, &str> {
+	pub fn create_ioctx<S: Into<Vec<u8>>>(&self, pool_name: S) -> Result<IoCtx, &str> {
 		let pool_name_ptr = CString::new(pool_name).unwrap().as_ptr();
 
 		let ioctx_handle: c_void_ptr = ptr::null_mut();
@@ -178,25 +187,57 @@ impl Drop for Cluster {
 	}
 }
 
+#[allow(dead_code)]
+/// Keep this here for debugging for now
+fn dump(msg: &str, buf: *const c_char, len: isize) {
+	print!("{}: ({}) [", msg, len);
+	for i in 0..len {
+		let c = unsafe {*buf.offset(i)};
+		print!("{:02x}", c);
+		if c >= 32 {
+			print!(" '{}'", c as u8 as char);
+		}
+		if i < len - 1 {
+			print!(",");
+		}
+	}
+	println!("]");
+}
+
 impl IoCtx {
-	pub fn write(&self, oid: &str, data: &str) -> Result<(), &str> {
-		let oid_ptr = CString::new(oid).unwrap().as_ptr();
-		let buf = CString::new(data).unwrap().as_ptr();
-		let len : size_t = data.len() as size_t;
-		handle_errors!(rados_write_full(self.handle, oid_ptr, buf, len));
+	pub fn write<S: Into<Vec<u8>>, T: Into<String>>(&self, oid: S, data: T) -> Result<(), &str> {
+		let oid_cs = CString::new(oid).unwrap();
+		let s : String = data.into();
+		let buf = CString::new(s).unwrap();
+		let buf_ptr = buf.as_ptr();
+		let len : size_t = buf.as_bytes().len() as size_t;
+		handle_errors!(rados_write_full(self.handle, oid_cs.as_ptr(), buf_ptr, len));
+
+		// let buf : Vec<u8> = s.into();
+		// println!("buf => {:?}", buf);
+		// let buf_ptr : *const c_char = buf.as_ptr() as *const c_char;
+		// println!("buf_ptr => {:?}", buf_ptr);
+		// let len : size_t = buf.len() as size_t;
+		// println!("len => {:?}", len);
+		// handle_errors!(rados_write_full(self.handle, oid_ptr, buf_ptr, len));
 		return Ok(());
 	}
 
-	pub fn read(&self, oid: &str, len: usize) -> Result<String, &str> {
-		let oid_ptr = CString::new(oid).unwrap().as_ptr();
-		let mut buf : Vec<i8> = Vec::with_capacity(len + 1); // allow for terminating '\0'
+	pub fn read(&self, oid: &str, len: usize) -> Result<&str, &str> {
+		use std::iter::repeat;
+
+		// Need to hang on the the CString, can immediately do as_ptr()
+		// see https://github.com/rust-lang/rust/issues/16035
+		let oid_cs = CString::new(oid).unwrap();
+		let buf_size = len + 1;
+		// A neat way to allocate a zeroed out array of given size
+		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
+//		let mut buf : Vec<i8> = Vec::with_capacity(len); // allow for terminating '\0'
 		let buf_ptr = buf.as_mut_ptr();
-		handle_errors!(rados_read(self.handle, oid_ptr, buf_ptr as *mut c_char, len as size_t, 0));
- 		let s = unsafe {
-	 		let cstr = CStr::from_ptr(buf_ptr);
-	 		str::from_utf8(cstr.to_bytes()).unwrap()
- 		};
- 		return Ok(s.to_owned());
+		handle_errors!(rados_read(self.handle, oid_cs.as_ptr(), buf_ptr as *mut c_char, buf_size as size_t, 0));
+ 		return Ok(unsafe {
+	 		CStr::from_ptr(buf_ptr).to_str().unwrap()
+ 		});
 	}
 
 	pub fn remove(&self, oid: &str) -> Result<(), &str> {
