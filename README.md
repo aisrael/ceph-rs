@@ -13,7 +13,8 @@ use ceph::rados::version;
 use ceph::rados::Cluster;
 
 fn main() {
-    println!("rados::version() => {}", args[0], ceph::rados::version());
+    let args: Vec<_> = env::args().collect();
+    println!("rados::version() => {}", ceph::rados::version());
 
     /* Initialize the cluster handle with the "ceph" cluster name and the "client.admin" user */
 	let cluster = Cluster::create("ceph", "client.admin", 0).unwrap_or_else(|e|
