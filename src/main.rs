@@ -9,8 +9,8 @@ fn main() {
 	let args: Vec<_> = env::args().collect();
     println!("{}: rados::version() => {}", args[0], ceph::rados::version());
 
-    /* Initialize the cluster handle with the "ceph" cluster name and the "client.admin" user */
-	let cluster = Cluster::create("ceph", "client.admin", 0).unwrap_or_else(|e|
+    /* Initialize the cluster handle with a 'null' cluster name and the "client.admin" user */
+	let cluster = Cluster::create(None, "client.admin", 0).unwrap_or_else(|e|
 		panic!(format!("{}: Couldn't create the cluster handle! {}", args[0], e))
 	);
     println!("Created a cluster handle: {:?}", cluster);

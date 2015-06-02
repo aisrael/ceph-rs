@@ -92,10 +92,35 @@ macro_rules! handle_errors {
 	}
 }
 
+pub trait ClusterNameArg {
+	fn as_ptr(self) -> *const c_char;
+}
+
+impl ClusterNameArg for String {
+	fn as_ptr(self) -> *const c_char {
+		CString::new(self).unwrap().as_ptr()
+	}
+}
+
+impl ClusterNameArg for &'static str {
+	fn as_ptr(self) -> *const c_char {
+		CString::new(self).unwrap().as_ptr()
+	}
+}
+
+impl ClusterNameArg for Option<String> {
+	fn as_ptr(self) -> *const c_char {
+		match self {
+			None => ptr::null(),
+			Some(s) => CString::new(s).unwrap().as_ptr()
+		}
+	}
+}
+
 impl Cluster {
-	pub fn create<'a>(cluster_name: &str, user_name: &str, flags: u64) -> Result<Cluster, &'a str> {
+	pub fn create<A: ClusterNameArg>(cluster_name: A, user_name: &str, flags: u64) -> Result<Cluster, &str> {
 		let handle: c_void_ptr = ptr::null_mut();
-	    let cluster_name_ptr = CString::new(cluster_name).unwrap().as_ptr();
+	    let cluster_name_ptr = cluster_name.as_ptr();
 	    let user_name_ptr = CString::new(user_name).unwrap().as_ptr();
 	    handle_errors!(rados_create2(&handle, cluster_name_ptr, user_name_ptr, flags));
 		return Ok(Cluster { handle: handle });
