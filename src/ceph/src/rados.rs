@@ -241,7 +241,7 @@ impl Cluster {
 	///
 	/// * OK(Cluster) on success
 	/// * Err(message: &str) on failure
-	pub fn create<'lifetime, A: ClusterNameArg, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'lifetime str> {
+	pub fn create<'a, A: ClusterNameArg, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'a str> {
 	    let cluster_name_ptr = match cluster_name.unwrap() {
 	    	None => ptr::null(),
 	    	Some(cs) => cs.as_ptr()
