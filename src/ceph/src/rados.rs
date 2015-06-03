@@ -1,3 +1,4 @@
+use std::iter::repeat;
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::ptr;
@@ -14,18 +15,32 @@ use libc::strerror;
 #[allow(non_camel_case_types)]
 type c_void_ptr = *const c_void;
 #[allow(non_camel_case_types)]
+type rados_t = c_void_ptr;
+#[allow(non_camel_case_types)]
 type rados_ioctx_t = c_void_ptr;
 
 #[link(name = "rados")]
 #[allow(dead_code)]
 extern "C" {
 	fn rados_version(major: *mut c_int, minor: *mut c_int, extra: *mut c_int);
-	fn rados_create(cluster: &c_void_ptr, id: *const c_char) -> c_int;
-	fn rados_create2(cluster: &c_void_ptr, cluster_name: *const c_char,
+	fn rados_create(cluster: &rados_t, id: *const c_char) -> c_int;
+	fn rados_create2(cluster: &rados_t, cluster_name: *const c_char,
 		user_name: *const c_char, flags: u64) -> c_int;
-	fn rados_conf_read_file(cluster: c_void_ptr, path: *const c_char) -> c_int;
-	fn rados_conf_parse_argv(cluster: c_void_ptr, argc: c_int, argv: *const *const c_char) -> c_int;
-	fn rados_connect(cluster: c_void_ptr) -> c_int;
+	fn rados_conf_read_file(cluster: rados_t, path: *const c_char) -> c_int;
+	fn rados_conf_parse_argv(cluster: rados_t, argc: c_int, argv: *const *const c_char) -> c_int;
+	fn rados_connect(cluster: rados_t) -> c_int;
+
+	/// Get the fsid of the cluster as a hexadecimal string.
+	///
+	/// The fsid is a unique id of an entire Ceph cluster.
+	///
+	/// @param cluster where to get the fsid
+	/// @param buf where to write the fsid
+	/// @param len the size of buf in bytes (should be 37)
+	/// @returns 0 on success, negative error code on failure
+	/// @returns -ERANGE if the buffer is too short to contain the
+	/// fsid
+	fn rados_cluster_fsid(cluster: rados_t, buf: *mut c_char, len: size_t) -> c_int;
 
 	fn rados_ioctx_create(cluster: c_void_ptr, poolname: *const c_char, ioctx: &rados_ioctx_t) -> c_int;
 	fn rados_write(io: rados_ioctx_t, oid: *const c_char, buf: *const c_char, len: size_t, offset: u64) -> c_int;
@@ -55,7 +70,30 @@ extern "C" {
 	/// @param off the offset to start reading from in the object
 	/// @returns number of bytes read on success, negative error code on
 	/// failure
- 	fn rados_read(io: rados_ioctx_t, oid: *const c_char, buf: *mut c_char, len: size_t, offset: u64) -> c_int;
+ 	fn rados_read(io: rados_ioctx_t, oid: *const c_char,
+ 		buf: *mut c_char, len: size_t, offset: u64) -> c_int;
+
+	/// Get the value of an extended attribute on an object.
+	///
+	/// @param io the context in which the attribute is read
+	/// @param o name of the object
+	/// @param name which extended attribute to read
+	/// @param buf where to store the result
+	/// @param len size of buf in bytes
+	/// @returns length of xattr value on success, negative error code on failure
+	fn rados_getxattr(io: rados_ioctx_t, oid: *const c_char,
+    	name: *const c_char, buf: *mut c_char, len: size_t) -> c_int;
+
+	/// Set an extended attribute on an object.
+	///
+	/// @param io the context in which xattr is set
+	/// @param o name of the object
+	/// @param name which extended attribute to set
+	/// @param buf what to store in the xattr
+	/// @param len the number of bytes in buf
+	/// @returns 0 on success, negative error code on failure
+	fn rados_setxattr(io: rados_ioctx_t, oid: *const c_char,
+		name: *const c_char, buf: *const c_char, len: size_t) -> c_int;
 
 	/// Delete an object
 	///
@@ -128,6 +166,18 @@ macro_rules! handle_errors {
 }
 
 impl Cluster {
+	pub fn fsid(&self) -> Result<&str, &str> {
+		// magic number
+		let buf_size = 37;
+		// A neat way to allocate a zeroed out array of given size
+		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
+		let buf_ptr = buf.as_mut_ptr();
+		handle_errors!(rados_cluster_fsid(self.handle, buf_ptr as *mut c_char, buf_size as size_t));
+ 		return Ok(unsafe {
+	 		CStr::from_ptr(buf_ptr).to_str().unwrap()
+ 		});
+	}
+
 	pub fn create<'lifetime, A: ClusterNameArg, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'lifetime str> {
 	    let cluster_name_ptr = match cluster_name.unwrap() {
 	    	None => ptr::null(),
@@ -208,16 +258,13 @@ impl IoCtx {
 	pub fn write<S: Into<Vec<u8>>, T: Into<String>>(&self, oid: S, data: T) -> Result<(), &str> {
 		let oid_cs = CString::new(oid).unwrap();
 		let s : String = data.into();
+		let len : size_t = s.len() as size_t;
 		let buf = CString::new(s).unwrap();
-		let buf_ptr = buf.as_ptr();
-		let len : size_t = buf.as_bytes().len() as size_t;
-		handle_errors!(rados_write_full(self.handle, oid_cs.as_ptr(), buf_ptr, len));
+		handle_errors!(rados_write_full(self.handle, oid_cs.as_ptr(), buf.as_ptr(), len));
 		return Ok(());
 	}
 
 	pub fn read(&self, oid: &str, len: usize) -> Result<&str, &str> {
-		use std::iter::repeat;
-
 		// Need to hang on the the CString, can immediately do as_ptr()
 		// see https://github.com/rust-lang/rust/issues/16035
 		let oid_cs = CString::new(oid).unwrap();
@@ -225,11 +272,38 @@ impl IoCtx {
 		let buf_size = len + 1;
 		// A neat way to allocate a zeroed out array of given size
 		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
-		let buf_ptr = buf.as_mut_ptr();
-		handle_errors!(rados_read(self.handle, oid_cs.as_ptr(), buf_ptr as *mut c_char, buf_size as size_t, 0));
+		handle_errors!(rados_read(self.handle, oid_cs.as_ptr(), buf.as_mut_ptr(), buf_size as size_t, 0));
  		return Ok(unsafe {
-	 		CStr::from_ptr(buf_ptr).to_str().unwrap()
+	 		CStr::from_ptr(buf.as_ptr()).to_str().unwrap()
  		});
+	}
+
+	pub fn getxattr<S: Into<Vec<u8>>>(&self, oid: S, name: S, len: usize) -> Result<&str, &str> {
+		// Need to hang on the the CString, can't immediately do as_ptr()
+		// see https://github.com/rust-lang/rust/issues/16035
+		let oid_cs = CString::new(oid).unwrap();
+		let name_cs = CString::new(name).unwrap();
+		// allow for terminating '\0' (not really needed)
+		let buf_size = len + 1;
+		// A neat way to allocate a zeroed out array of given size
+		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
+		handle_errors!(rados_getxattr(self.handle, oid_cs.as_ptr(), name_cs.as_ptr(), buf.as_mut_ptr(), buf_size as size_t));
+ 		return Ok(unsafe {
+	 		CStr::from_ptr(buf.as_ptr()).to_str().unwrap()
+ 		});
+	}
+
+	pub fn setxattr<S: Into<Vec<u8>>, T: Into<String>>(&self, oid: S, name: S, value: T) -> Result<(), &str> {
+		// Need to hang on the the CString, can't immediately do as_ptr()
+		// see https://github.com/rust-lang/rust/issues/16035
+		let oid_cs = CString::new(oid).unwrap();
+		let name_cs = CString::new(name).unwrap();
+		// allow for terminating '\0' (not really needed)
+		let s : String = value.into();
+		let len : size_t = s.len() as size_t;
+		let buf = CString::new(s).unwrap();
+		handle_errors!(rados_setxattr(self.handle, oid_cs.as_ptr(), name_cs.as_ptr(), buf.as_ptr(), len));
+		return Ok(());
 	}
 
 	pub fn remove(&self, oid: &str) -> Result<(), &str> {

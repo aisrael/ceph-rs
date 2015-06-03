@@ -33,6 +33,11 @@ fn main() {
 	);
     println!("Connected to the cluster");
 
+    let fsid = cluster.fsid().unwrap_or_else(|e|
+        panic!(format!("{}: cannot get clusted fsid: {}", args[0], e))
+    );
+    println!("Cluster FSID: {}", fsid);
+
     let poolname = "data";
     let ioctx = cluster.create_ioctx(poolname).unwrap_or_else(|e|
         panic!(format!("{}: cannot open rados pool: {}", args[0], e))
@@ -40,22 +45,34 @@ fn main() {
     println!("Created I/O context.");
 
     /* Write data to the cluster synchronously. */
-    let key = "hw";
+    let oid = "hw";
     let data = "Hello, world.";
-    println!("Setting \"{}\" to \"{}\"", key, data);
-    ioctx.write(key, data).unwrap_or_else(|e|
-    	panic!(format!("{}: Cannot write object \"{}\" to pool {}: {}", args[0], key, poolname, e))
+    println!("Setting \"{}\" to \"{}\"", oid, data);
+    ioctx.write(oid, data).unwrap_or_else(|e|
+    	panic!(format!("{}: Cannot write object \"{}\" to pool {}: {}", args[0], oid, poolname, e))
 	);
-    println!("Wrote \"{}\" to object \"{}\".", data, key);
+    println!("Wrote \"{}\" to object \"{}\".", data, oid);
+
+    let xattr_key = "lang";
+    let xattr_value = "en_US";
+    ioctx.setxattr(oid, xattr_key, xattr_value).unwrap_or_else(|e|
+        panic!(format!("{}: Cannot write xattr to pool {}: {}", args[0], poolname, e))
+    );
+    println!("Wrote \"{}\" to xattr \"{}\" for object \"{}\".", xattr_value, xattr_key, oid);
 
     let read = ioctx.read("hw", data.len()).unwrap_or_else(|e|
-        panic!(format!("{}: Cannot read object \"{}\" from pool {}: {}", args[0], key, poolname, e))
+        panic!(format!("{}: Cannot read object \"{}\" from pool {}: {}", args[0], oid, poolname, e))
     );
-    println!("Read object {} => \"{}\"", key, read);
+    println!("Read object {} => \"{}\"", oid, read);
 
-    ioctx.remove(key).unwrap_or_else(|e|
-    	panic!(format!("{}: Cannot remove object \"{}\" from pool {}: {}", args[0], key, poolname, e))
+    let xattr_read = ioctx.getxattr(oid, xattr_key, 5).unwrap_or_else(|e|
+        panic!(format!("{}: Cannot read xattr \"{}\" from pool {}: {}", args[0], xattr_key, poolname, e))
+    );
+    println!("Read xattr \"{}\" for object \"{}\". The contents are: \"{}\"", xattr_key, oid, xattr_read);
+
+    ioctx.remove(oid).unwrap_or_else(|e|
+    	panic!(format!("{}: Cannot remove object \"{}\" from pool {}: {}", args[0], oid, poolname, e))
 	);
-    println!("Removed object \"{}\".", key);
+    println!("Removed object \"{}\".", oid);
 
 }
