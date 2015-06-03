@@ -22,10 +22,41 @@ type rados_ioctx_t = c_void_ptr;
 #[link(name = "rados")]
 #[allow(dead_code)]
 extern "C" {
-	fn rados_version(major: *mut c_int, minor: *mut c_int, extra: *mut c_int);
+
+	/// Get the version of librados.
+	///
+	/// The version number is `major.minor.extra`. Note that this is
+	/// unrelated to the Ceph version number.
+	///
+	/// # Parameters
+	///
+	/// * `major` where to store the major version number
+	/// * `minor` where to store the minor version number
+	/// * `extra` where to store the extra version number
+ 	fn rados_version(major: *mut c_int, minor: *mut c_int, extra: *mut c_int);
+
+	/// Create a handle for communicating with a RADOS cluster.
+	///
+	/// Ceph environment variables are read when this is called, so if
+	/// $CEPH_ARGS specifies everything you need to connect, no further
+	/// configuration is necessary.
+	///
+	/// # Parameters
+	///
+	/// * `cluster` where to store the handle
+	/// * `id` the user to connect as (i.e. `"admin"`, not `"client.admin"`)
+	/// * `0` on success, negative error code on failure
 	fn rados_create(cluster: &rados_t, id: *const c_char) -> c_int;
-	fn rados_create2(cluster: &rados_t, cluster_name: *const c_char,
+
+	/// Extended version of rados_create.
+	///
+	/// Like rados_create, but
+	/// 1) don't assume `"client." + id`; allow full specification of name
+	/// 2) allow specification of cluster name
+	/// 3) flags for future expansion
+ 	fn rados_create2(cluster: &rados_t, cluster_name: *const c_char,
 		user_name: *const c_char, flags: u64) -> c_int;
+
 	fn rados_conf_read_file(cluster: rados_t, path: *const c_char) -> c_int;
 	fn rados_conf_parse_argv(cluster: rados_t, argc: c_int, argv: *const *const c_char) -> c_int;
 	fn rados_connect(cluster: rados_t) -> c_int;
@@ -34,12 +65,16 @@ extern "C" {
 	///
 	/// The fsid is a unique id of an entire Ceph cluster.
 	///
-	/// @param cluster where to get the fsid
-	/// @param buf where to write the fsid
-	/// @param len the size of buf in bytes (should be 37)
-	/// @returns 0 on success, negative error code on failure
-	/// @returns -ERANGE if the buffer is too short to contain the
-	/// fsid
+	/// # Parameters
+	///
+	/// * `cluster` where to get the fsid
+	/// * `buf` where to write the fsid
+	/// * `len` the size of buf in bytes (should be 37)
+	///
+	/// # Returns
+	///
+	/// * `0` on success, negative error code on failure
+	/// * `-ERANGE` if the buffer is too short to contain the fsid
 	fn rados_cluster_fsid(cluster: rados_t, buf: *mut c_char, len: size_t) -> c_int;
 
 	fn rados_ioctx_create(cluster: c_void_ptr, poolname: *const c_char, ioctx: &rados_ioctx_t) -> c_int;
@@ -109,6 +144,16 @@ extern "C" {
 	fn rados_shutdown(cluster: c_void_ptr);
 }
 
+/// Get the version of librados.
+///
+/// The version number is `major.minor.extra`. Note that this is
+/// unrelated to the Ceph version number.
+///
+/// # Examples
+///
+/// ```rust
+/// println!("librados version: {}", ceph::rados::version());
+/// ```
 pub fn version() -> String {
 	let mut major: c_int = -1;
 	let mut minor: c_int = -1;
@@ -120,11 +165,11 @@ pub fn version() -> String {
 }
 
 pub struct Cluster {
-	handle: c_void_ptr
+	handle: rados_t
 }
 
 pub struct IoCtx {
-	handle: c_void_ptr
+	handle: rados_ioctx_t
 }
 
 pub trait ClusterNameArg {
@@ -165,19 +210,37 @@ macro_rules! handle_errors {
 	}
 }
 
-impl Cluster {
-	pub fn fsid(&self) -> Result<&str, &str> {
-		// magic number
-		let buf_size = 37;
-		// A neat way to allocate a zeroed out array of given size
-		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
-		let buf_ptr = buf.as_mut_ptr();
-		handle_errors!(rados_cluster_fsid(self.handle, buf_ptr as *mut c_char, buf_size as size_t));
- 		return Ok(unsafe {
-	 		CStr::from_ptr(buf_ptr).to_str().unwrap()
- 		});
+/// A neat way to allocate a zeroed out array of given size
+///
+/// # Examples
+///
+/// ```rust
+/// let mut buf = zeroed_c_char_buf(100);
+/// ```
+macro_rules! zeroed_c_char_buf {
+	($n:expr) => {
+		repeat(0).take($n).collect::<Vec<c_char>>();
 	}
+}
 
+impl Cluster {
+
+	/// Create a handle for communicating with a RADOS cluster.
+	///
+	/// Ceph environment variables are read when this is called, so if
+	/// $CEPH_ARGS specifies everything you need to connect, no further
+	/// configuration is necessary.
+	///
+	/// # Parameters
+	///
+	/// * `cluster_name` the cluster name as a string, or `None` (equivalent to `null`)
+	/// * `user_name` the full user name to connect as (i.e. "client.admin"`)
+	/// * `flags` for future expansion
+	///
+	/// # Returns
+	///
+	/// * OK(Cluster) on success
+	/// * Err(message: &str) on failure
 	pub fn create<'lifetime, A: ClusterNameArg, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'lifetime str> {
 	    let cluster_name_ptr = match cluster_name.unwrap() {
 	    	None => ptr::null(),
@@ -187,6 +250,25 @@ impl Cluster {
 		let handle: c_void_ptr = ptr::null_mut();
 	    handle_errors!(rados_create2(&handle, cluster_name_ptr, user_name_ptr, flags));
 		return Ok(Cluster { handle: handle });
+	}
+
+	/// Get the fsid of the cluster as a hexadecimal string.
+	///
+	/// The fsid is a unique id of an entire Ceph cluster.
+	///
+	/// # Returns
+	///
+	/// * `Ok(&str)` on success, with the fsid
+	/// * `Err(&str)` on any error, with the error message
+	pub fn fsid(&self) -> Result<&str, &str> {
+		// magic number
+		let buf_size = 37;
+		let mut buf = zeroed_c_char_buf!(buf_size);
+		let buf_ptr = buf.as_mut_ptr();
+		handle_errors!(rados_cluster_fsid(self.handle, buf_ptr as *mut c_char, buf_size as size_t));
+ 		return Ok(unsafe {
+	 		CStr::from_ptr(buf_ptr).to_str().unwrap()
+ 		});
 	}
 
 	pub fn conf_read_file<S: Into<Vec<u8>>>(&self, config_filename: S) -> Result<(), &str> {
@@ -270,8 +352,7 @@ impl IoCtx {
 		let oid_cs = CString::new(oid).unwrap();
 		// allow for terminating '\0' (not really needed)
 		let buf_size = len + 1;
-		// A neat way to allocate a zeroed out array of given size
-		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
+		let mut buf = zeroed_c_char_buf!(buf_size);
 		handle_errors!(rados_read(self.handle, oid_cs.as_ptr(), buf.as_mut_ptr(), buf_size as size_t, 0));
  		return Ok(unsafe {
 	 		CStr::from_ptr(buf.as_ptr()).to_str().unwrap()
@@ -286,7 +367,7 @@ impl IoCtx {
 		// allow for terminating '\0' (not really needed)
 		let buf_size = len + 1;
 		// A neat way to allocate a zeroed out array of given size
-		let mut buf = repeat(0).take(buf_size).collect::<Vec<c_char>>();
+		let mut buf = zeroed_c_char_buf!(buf_size);
 		handle_errors!(rados_getxattr(self.handle, oid_cs.as_ptr(), name_cs.as_ptr(), buf.as_mut_ptr(), buf_size as size_t));
  		return Ok(unsafe {
 	 		CStr::from_ptr(buf.as_ptr()).to_str().unwrap()
