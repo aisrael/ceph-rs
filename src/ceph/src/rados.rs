@@ -57,9 +57,74 @@ extern "C" {
  	fn rados_create2(cluster: &rados_t, cluster_name: *const c_char,
 		user_name: *const c_char, flags: u64) -> c_int;
 
-	fn rados_conf_read_file(cluster: rados_t, path: *const c_char) -> c_int;
-	fn rados_conf_parse_argv(cluster: rados_t, argc: c_int, argv: *const *const c_char) -> c_int;
+	/// Connect to the cluster.
+	///
+	/// # Note
+	///
+	/// **BUG:** Before calling this, calling a function that communicates with the
+	/// cluster will crash.
+	///
+	/// # Prerequisites
+	///
+	/// The cluster handle is configured with at least a monitor address.
+	/// If cephx is enabled, a client name and secret must also be set.
+	///
+	/// # Post
+	///
+	/// If this succeeds, any function in librados may be used
+	///
+	/// # Parameters
+	///
+	/// * `cluster` The cluster to connect to.
+	///
+	/// # Returns
+	///
+	/// * 0 on sucess
+	/// * negative error code on failure
 	fn rados_connect(cluster: rados_t) -> c_int;
+
+	/// Configure the cluster handle using a Ceph config file
+	///
+	/// If path is `NULL`, the default locations are searched, and the first
+	/// found is used. The locations are:
+	///
+	/// * `$CEPH_CONF` (environment variable)
+	/// * `/etc/ceph/ceph.conf`
+	/// * `~/.ceph/config`
+	/// * `ceph.conf` (in the current working directory)
+	///
+	/// # Prerequisites
+	///
+	/// `rados_connect()` has not been called on the cluster handle
+	///
+	/// # Parameters
+	///
+	/// * `cluster` cluster handle to configure
+	/// * `path` path to a Ceph configuration file
+	/// * 0 on success, negative error code on failure
+ 	fn rados_conf_read_file(cluster: rados_t, path: *const c_char) -> c_int;
+
+	/// Configure the cluster handle with command line arguments
+	///
+	/// `argv` can contain any common Ceph command line option, including any
+	/// configuration parameter prefixed by `--` and replacing spaces with
+	/// dashes or underscores. For example, the following options are equivalent:
+	///
+	/// * `--mon-host 10.0.0.1:6789`
+	/// * `--mon_host 10.0.0.1:6789`
+	/// * `-m 10.0.0.1:6789`
+	///
+	/// # Prerequisites
+	///
+	/// `rados_connect()` has not been called on the cluster handle
+	///
+	/// # Parameters
+	///
+	/// * `cluster` cluster handle to configure
+	/// * `argc` number of arguments in argv
+	/// * `argv` arguments to parse
+	/// * 0 on success, negative error code on failure
+	fn rados_conf_parse_argv(cluster: rados_t, argc: c_int, argv: *const *const c_char) -> c_int;
 
 	/// Get the fsid of the cluster as a hexadecimal string.
 	///
@@ -172,23 +237,23 @@ pub struct IoCtx {
 	handle: rados_ioctx_t
 }
 
-pub trait ClusterNameArg {
+pub trait StrStringOrNone {
 	fn unwrap(self) -> Option<CString>;
 }
 
-impl ClusterNameArg for String {
+impl StrStringOrNone for String {
 	fn unwrap(self) -> Option<CString> {
 		Some(CString::new(self).unwrap())
 	}
 }
 
-impl ClusterNameArg for &'static str {
+impl StrStringOrNone for &'static str {
 	fn unwrap(self) -> Option<CString> {
 		Some(CString::new(self).unwrap())
 	}
 }
 
-impl ClusterNameArg for Option<String> {
+impl StrStringOrNone for Option<String> {
 	fn unwrap(self) -> Option<CString> {
 		match self {
 			None => None,
@@ -239,9 +304,9 @@ impl Cluster {
 	///
 	/// # Returns
 	///
-	/// * OK(Cluster) on success
-	/// * Err(message: &str) on failure
-	pub fn create<'a, A: ClusterNameArg, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'a str> {
+	/// * `Ok(Cluster)` on success
+	/// * `Err(message: &str)` on failure
+	pub fn create<'a, A: StrStringOrNone, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'a str> {
 	    let cluster_name_ptr = match cluster_name.unwrap() {
 	    	None => ptr::null(),
 	    	Some(cs) => cs.as_ptr()
@@ -252,14 +317,103 @@ impl Cluster {
 		return Ok(Cluster { handle: handle });
 	}
 
+
+	/// Connect to the cluster.
+	///
+	/// # Note
+	///
+	/// **BUG:** Before calling this, calling a function that communicates with the
+	/// cluster will crash.
+	///
+	/// # Prerequisites
+	///
+	/// The cluster handle is configured with at least a monitor address.
+	/// If cephx is enabled, a client name and secret must also be set.
+	///
+	/// # Post
+	///
+	/// If this succeeds, any function in librados may be used
+	///
+	/// # Returns
+	///
+	/// * `Ok(())` on sucess
+	/// * `Err(message: &str)` on failure
+	pub fn connect(&self) -> Result<(), &str> {
+		handle_errors!(rados_connect(self.handle));
+		return Ok(());
+	}
+
+	/// Configure the cluster handle using a Ceph config file
+	///
+	/// If path is `NULL`, the default locations are searched, and the first
+	/// found is used. The locations are:
+	///
+	/// * `$CEPH_CONF` (environment variable)
+	/// * `/etc/ceph/ceph.conf`
+	/// * `~/.ceph/config`
+	/// * `ceph.conf` (in the current working directory)
+	///
+	/// # Prerequisites
+	///
+	/// `rados_connect()` has not been called on the cluster handle
+	///
+	/// # Parameters
+	///
+	/// * `cluster` cluster handle to configure
+	/// * `path` path to a Ceph configuration file
+	///
+	/// # Returns
+	///
+	/// * `Ok(())` on success
+	/// * `Err(message: &str)` on failure
+	pub fn conf_read_file<S: StrStringOrNone>(&self, config_filename: S) -> Result<(), &str> {
+	    let config_filename_ptr = match config_filename.unwrap() {
+	    	None => ptr::null(),
+	    	Some(cs) => cs.as_ptr()
+	    };
+		handle_errors!(rados_conf_read_file(self.handle, config_filename_ptr));
+		return Ok(());
+	}
+
+	/// Configure the cluster handle with command line arguments
+	///
+	/// argv can contain any common Ceph command line option, including any
+	/// configuration parameter prefixed by '--' and replacing spaces with
+	/// dashes or underscores. For example, the following options are equivalent:
+	///
+	/// * `--mon-host 10.0.0.1:6789`
+	/// * `--mon_host 10.0.0.1:6789`
+	/// * `-m 10.0.0.1:6789`
+	///
+	/// # Prerequisites
+	///
+	/// `rados_connect()` has not been called on the cluster handle
+	///
+	/// # Parameters
+	///
+	/// * `cluster` cluster handle to configure
+	/// * `args` Vec of String arguments, e.g. `env::args().collect()`
+	///
+	/// # Returns
+	///
+	/// * `Ok(())` on success
+	/// * `Err(message: &str)` on failure
+ 	pub fn conf_parse_argv(&self, args: &Vec<String>) -> Result<(), &str> {
+		let argc = args.len() as i32;
+		let args_cs : Vec<CString> = args.iter().map(|a| CString::new(a.as_str()).unwrap()).collect();
+		let argv : Vec<*const c_char> = args_cs.iter().map(|cs| cs.as_ptr()).collect();
+		handle_errors!(rados_conf_parse_argv(self.handle, argc, argv.as_slice().as_ptr()));
+		return Ok(());
+	}
+
 	/// Get the fsid of the cluster as a hexadecimal string.
 	///
 	/// The fsid is a unique id of an entire Ceph cluster.
 	///
 	/// # Returns
 	///
-	/// * `Ok(&str)` on success, with the fsid
-	/// * `Err(&str)` on any error, with the error message
+	/// * `Ok(fsid: &str)` on success
+	/// * `Err(message: &str)` on failure
 	pub fn fsid(&self) -> Result<&str, &str> {
 		// magic number
 		let buf_size = 37;
@@ -269,25 +423,6 @@ impl Cluster {
  		return Ok(unsafe {
 	 		CStr::from_ptr(buf_ptr).to_str().unwrap()
  		});
-	}
-
-	pub fn conf_read_file<S: Into<Vec<u8>>>(&self, config_filename: S) -> Result<(), &str> {
-		let path = CString::new(config_filename).unwrap();
-		handle_errors!(rados_conf_read_file(self.handle, path.as_ptr()));
-		return Ok(());
-	}
-
-	pub fn conf_parse_argv(&self, args: &Vec<String>) -> Result<(), &str> {
-		let argc = args.len() as i32;
-		let args_cs : Vec<CString> = args.iter().map(|a| CString::new(a.as_str()).unwrap()).collect();
-		let argv : Vec<*const c_char> = args_cs.iter().map(|cs| cs.as_ptr()).collect();
-		handle_errors!(rados_conf_parse_argv(self.handle, argc, argv.as_slice().as_ptr()));
-		return Ok(());
-	}
-
-	pub fn connect(&self) -> Result<(), &str> {
-		handle_errors!(rados_connect(self.handle));
-		return Ok(());
 	}
 
 	pub fn create_ioctx<S: Into<Vec<u8>>>(&self, pool_name: S) -> Result<IoCtx, &str> {
