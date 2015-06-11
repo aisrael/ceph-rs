@@ -255,10 +255,7 @@ impl StrStringOrNone for &'static str {
 
 impl StrStringOrNone for Option<String> {
 	fn unwrap(self) -> Option<CString> {
-		match self {
-			None => None,
-			Some(s) => Some(CString::new(s).unwrap())
-		}
+		self.map(|s| CString::new(s).unwrap())
 	}
 }
 
