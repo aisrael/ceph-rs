@@ -303,7 +303,10 @@ impl Cluster {
 	///
 	/// * `Ok(Cluster)` on success
 	/// * `Err(message: &str)` on failure
-	pub fn create<'a, A: StrStringOrNone, S: Into<Vec<u8>>>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'a str> {
+	pub fn create<'a, A, S>(cluster_name: A, user_name: S, flags: u64) -> Result<Cluster, &'a str>
+		where A: StrStringOrNone,
+		S: Into<Vec<u8>>
+	{
 	    let cluster_name_ptr = match cluster_name.unwrap() {
 	    	None => ptr::null(),
 	    	Some(cs) => cs.as_ptr()
@@ -363,7 +366,9 @@ impl Cluster {
 	///
 	/// * `Ok(())` on success
 	/// * `Err(message: &str)` on failure
-	pub fn conf_read_file<S: StrStringOrNone>(&self, config_filename: S) -> Result<(), &str> {
+	pub fn conf_read_file<S>(&self, config_filename: S) -> Result<(), &str>
+		where S: StrStringOrNone
+	{
 	    let config_filename_ptr = match config_filename.unwrap() {
 	    	None => ptr::null(),
 	    	Some(cs) => cs.as_ptr()
@@ -422,7 +427,9 @@ impl Cluster {
  		});
 	}
 
-	pub fn create_ioctx<S: Into<Vec<u8>>>(&self, pool_name: S) -> Result<IoCtx, &str> {
+	pub fn create_ioctx<S>(&self, pool_name: S) -> Result<IoCtx, &str>
+		where S: Into<Vec<u8>>
+	{
 		let pool_name_ptr = CString::new(pool_name).unwrap().as_ptr();
 
 		let ioctx_handle: c_void_ptr = ptr::null_mut();
@@ -469,7 +476,9 @@ fn dump(msg: &str, buf: *const c_char, len: isize) {
 }
 
 impl IoCtx {
-	pub fn write<S: Into<Vec<u8>>, T: Into<String>>(&self, oid: S, data: T) -> Result<(), &str> {
+	pub fn write<S, T>(&self, oid: S, data: T) -> Result<(), &str>
+		where S: Into<Vec<u8>>, T: Into<String>
+	{
 		let oid_cs = CString::new(oid).unwrap();
 		let s : String = data.into();
 		let len : size_t = s.len() as size_t;
@@ -491,7 +500,9 @@ impl IoCtx {
  		});
 	}
 
-	pub fn getxattr<S: Into<Vec<u8>>>(&self, oid: S, name: S, len: usize) -> Result<&str, &str> {
+	pub fn getxattr<S>(&self, oid: S, name: S, len: usize) -> Result<&str, &str>
+		where S: Into<Vec<u8>>
+	{
 		// Need to hang on the the CString, can't immediately do as_ptr()
 		// see https://github.com/rust-lang/rust/issues/16035
 		let oid_cs = CString::new(oid).unwrap();
@@ -506,7 +517,9 @@ impl IoCtx {
  		});
 	}
 
-	pub fn setxattr<S: Into<Vec<u8>>, T: Into<String>>(&self, oid: S, name: S, value: T) -> Result<(), &str> {
+	pub fn setxattr<S, T>(&self, oid: S, name: S, value: T) -> Result<(), &str>
+		where S: Into<Vec<u8>>, T: Into<String>
+	{
 		// Need to hang on the the CString, can't immediately do as_ptr()
 		// see https://github.com/rust-lang/rust/issues/16035
 		let oid_cs = CString::new(oid).unwrap();
